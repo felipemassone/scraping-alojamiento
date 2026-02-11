@@ -123,10 +123,19 @@ col1, col2 = st.columns([1, 1])
 
 with col1:
     sitio_elegido = st.radio("1. Elige el sitio web:", ["InterPatagonia", "WelcomeArgentina"])
-    ciudad_input = st.text_input("2. Escribe la ciudad (URL):", placeholder="ej: villalaangostura")
+    ciudad_input = st.text_input("2. Escribe la ciudad (URL):", placeholder="ej: bariloche")
 
 with col2:
-    st.info("💡 **Ayuda:**\n\nPrimero presiona 'Analizar Ciudad' para ver cuántos alojamientos hay.\n\nLuego selecciona la cantidad y presiona 'Extraer Datos'.")
+    st.info("""
+    💡 **INSTRUCCIONES**
+    
+    Debes copiar el nombre de la ciudad tal cual aparece en la dirección web (URL).
+    
+    * Ejemplo: `...com/`**`elcalafate`**`/alojamientos...`
+    * 👉 Escribis: `elcalafate`
+    
+    (Usa siempre minúsculas y tene cuidado con los guiones).
+    """)
 
 if st.button("🔍 1. ANALIZAR CIUDAD", type="secondary", use_container_width=True):
     if not ciudad_input:
