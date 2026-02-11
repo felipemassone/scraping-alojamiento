@@ -8,10 +8,17 @@ import re
 from urllib.parse import urljoin
 
 st.set_page_config(
-    page_title="Extractor de Alojamientos",
+    page_title="Scraping de Alojamientos",
     page_icon="🏨",
     layout="centered"
 )
+
+if 'urls_encontradas' not in st.session_state:
+    st.session_state.urls_encontradas = []
+if 'ciudad_actual' not in st.session_state:
+    st.session_state.ciudad_actual = ""
+if 'sitio_actual' not in st.session_state:
+    st.session_state.sitio_actual = ""
 
 def limpiar_y_extraer(texto_completo, soup_objeto):
     texto_limpio = re.sub(r'200\d\s?[-–]\s?202\d', '', texto_completo) 
@@ -39,7 +46,7 @@ def limpiar_y_extraer(texto_completo, soup_objeto):
     resultado_telefonos = " / ".join(list(numeros)) if numeros else "No encontrado"
     return resultado_telefonos, whatsapp_detectado
 
-def ejecutar_scraper(sitio, ciudad, limite, barra, estado):
+def buscar_enlaces(sitio, ciudad):
     if sitio == "InterPatagonia":
         base_url = "https://www.interpatagonia.com"
     else:
@@ -51,15 +58,12 @@ def ejecutar_scraper(sitio, ciudad, limite, barra, estado):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
 
-    estado.info(f"Conectando a: {url_listado}...")
     try:
         resp = requests.get(url_listado, headers=headers, timeout=10)
         if resp.status_code != 200:
-            st.error("No se pudo entrar a la página. Revisa que la ciudad esté bien escrita.")
-            return []
+            return None
         soup = BeautifulSoup(resp.text, 'html.parser')
-    except Exception as e:
-        st.error(f"Error de conexión: {e}")
+    except:
         return []
 
     links_fichas = set()
@@ -75,24 +79,21 @@ def ejecutar_scraper(sitio, ciudad, limite, barra, estado):
             
             url_completa = urljoin(url_listado, href)
             links_fichas.add(url_completa)
-    
-    lista_final = list(links_fichas)
-    
-    if limite > 0:
-        lista_final = lista_final[:limite]
-    
-    total = len(lista_final)
-    estado.success(f"¡Encontrados {total} alojamientos! Escaneando detalles...")
-    
+            
+    return list(links_fichas)
+
+def procesar_fichas(lista_urls, sitio, ciudad, barra, estado):
     datos_finales = []
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     
-    for i, url_hotel in enumerate(lista_final):
+    total = len(lista_urls)
+    
+    for i, url_hotel in enumerate(lista_urls):
         progreso = (i + 1) / total
         barra.progress(progreso)
         
         try:
             time.sleep(random.uniform(0.1, 0.5))
-            
             r_hotel = requests.get(url_hotel, headers=headers, timeout=8)
             s_hotel = BeautifulSoup(r_hotel.text, 'html.parser')
             
@@ -109,48 +110,66 @@ def ejecutar_scraper(sitio, ciudad, limite, barra, estado):
                 'Web': sitio,
                 'Link': url_hotel
             })
-            
         except:
             continue
-
+            
     return datos_finales
 
-st.title("🔎 Buscador de Contactos")
-st.markdown("Herramienta interna para **InterPatagonia** y **WelcomeArgentina**.")
+st.title("🔎 Buscador de Alojamientos")
+st.markdown("Herramienta interna para Scraping de alojamientos.")
 st.divider()
 
 col1, col2 = st.columns([1, 1])
 
 with col1:
-    sitio_elegido = st.radio("1. Elige el sitio web:", 
-                             ["InterPatagonia", "WelcomeArgentina"])
-    
-    ciudad_input = st.text_input("2. Escribe la ciudad (URL):", 
-                                 placeholder="ej: villa-la-angostura")
-    
-    limite_input = st.number_input("3. Cantidad a buscar (0 = Todos):", 
-                                   min_value=0, value=20, step=10)
+    sitio_elegido = st.radio("1. Elige el sitio web:", ["InterPatagonia", "WelcomeArgentina"])
+    ciudad_input = st.text_input("2. Escribe la ciudad (URL):", placeholder="ej: villa-la-angostura")
 
 with col2:
-    st.info("💡 **Ayuda:**\n\nLa ciudad debe escribirse igual que en la dirección web.\n\nEjemplo: Si la web es `interpatagonia.com/el-calafate/`, escribe `el-calafate`.")
+    st.info("💡 **Ayuda:**\n\nPrimero presiona 'Analizar Ciudad' para ver cuántos alojamientos hay.\n\nLuego selecciona la cantidad y presiona 'Extraer Datos'.")
 
-st.divider()
-
-if st.button("🚀 INICIAR BÚSQUEDA", type="primary", use_container_width=True):
-    
+if st.button("🔍 1. ANALIZAR CIUDAD", type="secondary", use_container_width=True):
     if not ciudad_input:
         st.warning("⚠️ ¡Falta escribir la ciudad!")
     else:
+        ciudad_clean = ciudad_input.strip().lower().replace(" ", "-")
+        with st.spinner(f"Analizando {sitio_elegido}..."):
+            enlaces = buscar_enlaces(sitio_elegido, ciudad_clean)
+            
+            if enlaces is None:
+                st.error("No se pudo entrar a la página. Revisa que la ciudad esté bien escrita.")
+                st.session_state.urls_encontradas = []
+            elif not enlaces:
+                st.warning("Se encontró la página pero no hay alojamientos.")
+                st.session_state.urls_encontradas = []
+            else:
+                st.session_state.urls_encontradas = enlaces
+                st.session_state.ciudad_actual = ciudad_clean
+                st.session_state.sitio_actual = sitio_elegido
+                st.success(f"¡Éxito! Se encontraron {len(enlaces)} alojamientos.")
+
+if len(st.session_state.urls_encontradas) > 0:
+    st.divider()
+    st.subheader(f"📍 Resultados para: {st.session_state.ciudad_actual}")
+    
+    total_disponible = len(st.session_state.urls_encontradas)
+    limite = st.slider("Selecciona cantidad a extraer:", 1, total_disponible, total_disponible)
+    
+    if st.button(f"🚀 2. EXTRAER DATOS ({limite})", type="primary", use_container_width=True):
+        
+        lista_a_procesar = st.session_state.urls_encontradas[:limite]
+        
         barra_carga = st.progress(0)
         mensaje_estado = st.empty()
         
-        ciudad_clean = ciudad_input.strip().lower().replace(" ", "-")
+        datos = procesar_fichas(lista_a_procesar, 
+                                st.session_state.sitio_actual, 
+                                st.session_state.ciudad_actual, 
+                                barra_carga, 
+                                mensaje_estado)
         
-        resultados = ejecutar_scraper(sitio_elegido, ciudad_clean, limite_input, barra_carga, mensaje_estado)
-        
-        if resultados:
-            df = pd.DataFrame(resultados)
-            
+        if datos:
+            df = pd.DataFrame(datos)
             st.balloons()
             mensaje_estado.success("¡Proceso Terminado!")
             
@@ -159,14 +178,12 @@ if st.button("🚀 INICIAR BÚSQUEDA", type="primary", use_container_width=True)
             
             csv = df.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
             
-            file_name = f"Datos_{sitio_elegido}_{ciudad_clean}.csv"
+            file_name = f"Datos_{st.session_state.sitio_actual}_{st.session_state.ciudad_actual}.csv"
             
             st.download_button(
-                label=f"📥 DESCARGAR ARCHIVO ({len(resultados)} datos)",
+                label=f"📥 DESCARGAR ARCHIVO ({len(datos)} datos)",
                 data=csv,
                 file_name=file_name,
                 mime="text/csv",
                 type="primary"
             )
-        else:
-            mensaje_estado.error("No se encontraron resultados. ¿Estará bien escrita la ciudad?")
