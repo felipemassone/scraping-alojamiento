@@ -272,7 +272,7 @@ def procesar_fichas_turismocordoba(lista_urls, ciudad, barra, estado):
     
     return datos_finales
 
-st.title("🔎 Buscador de Alojamientos")
+st.title("Buscador de Alojamientos")
 st.markdown("Herramienta interna para Scraping de alojamientos.")
 st.divider()
 
@@ -350,7 +350,7 @@ if st.button("🔍 1. ANALIZAR CIUDAD", type="secondary", use_container_width=Tr
 
 if len(st.session_state.urls_encontradas) > 0:
     st.divider()
-    st.subheader(f"📊 Resultados para: {st.session_state.ciudad_actual}")
+    st.subheader(f"Resultados para: {st.session_state.ciudad_actual}")
     
     if st.session_state.sitio_actual == "TurismoCordoba":
         st.info(f"""
