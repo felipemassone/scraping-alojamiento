@@ -13,6 +13,7 @@ st.set_page_config(
     layout="centered"
 )
 
+# Inicializacion de estado
 if 'urls_encontradas' not in st.session_state:
     st.session_state.urls_encontradas = []
 if 'ciudad_actual' not in st.session_state:
@@ -21,9 +22,11 @@ if 'sitio_actual' not in st.session_state:
     st.session_state.sitio_actual = ""
     
 def limpiar_y_extraer(texto_completo, soup_objeto):
+    # Limpieza basica
     texto_limpio = re.sub(r'200\d\s?[-—]\s?202\d', '', texto_completo) 
     texto_limpio = re.sub(r'©', '', texto_limpio)
     
+    # TODO: Mejorar esta regex en el futuro, a veces agarra numeros de CUIT
     patron = r'(?:\+?54|0)?\s?(?:\d{2,4})?[\s.-]?\d{3,4}[\s.-]?\d{3,4}'
     matches = re.findall(patron, texto_limpio)
     
@@ -33,7 +36,7 @@ def limpiar_y_extraer(texto_completo, soup_objeto):
         if len(solo_digitos) >= 9:
             numeros.add(m.strip())
 
-    whatsapp_detectado = "No"
+    has_wsp = "No"
     for link in soup_objeto.find_all('a', href=True):
         href = link['href']
         
@@ -41,17 +44,13 @@ def limpiar_y_extraer(texto_completo, soup_objeto):
             numeros.add(href.replace('tel:', '').strip())
             
         if 'wa.me' in href or 'api.whatsapp' in href:
-            whatsapp_detectado = "Sí"
+            has_wsp = "Sí"
 
-    resultado_telefonos = " / ".join(list(numeros)) if numeros else "No encontrado"
-    return resultado_telefonos, whatsapp_detectado
+    phones_str = " / ".join(list(numeros)) if numeros else "No encontrado"
+    return phones_str, has_wsp
 
 def buscar_enlaces(sitio, ciudad):
-    if sitio == "InterPatagonia":
-        base_url = "https://www.interpatagonia.com"
-    else:
-        base_url = "https://www.welcomeargentina.com"
-        
+    base_url = "https://www.interpatagonia.com" if sitio == "InterPatagonia" else "https://www.welcomeargentina.com"
     url_listado = f"{base_url}/{ciudad}/alojamientos.html"
     
     headers = {
@@ -63,7 +62,8 @@ def buscar_enlaces(sitio, ciudad):
         if resp.status_code != 200:
             return None
         soup = BeautifulSoup(resp.text, 'html.parser')
-    except:
+    except Exception as e:
+        print(f"Error fetching {url_listado}: {e}")
         return []
 
     links_fichas = set()
@@ -84,16 +84,15 @@ def buscar_enlaces(sitio, ciudad):
 
 def procesar_fichas(lista_urls, sitio, ciudad, barra, estado):
     datos_finales = []
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
-    
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     total = len(lista_urls)
     
     for i, url_hotel in enumerate(lista_urls):
-        progreso = (i + 1) / total
-        barra.progress(progreso)
+        barra.progress((i + 1) / total)
         estado.text(f"Procesando {i+1}/{total}...")
         
         try:
+            # Sleep random para no saturar el server y evitar baneos
             time.sleep(random.uniform(0.1, 0.5))
             r_hotel = requests.get(url_hotel, headers=headers, timeout=8)
             s_hotel = BeautifulSoup(r_hotel.text, 'html.parser')
@@ -111,41 +110,37 @@ def procesar_fichas(lista_urls, sitio, ciudad, barra, estado):
                 'Web': sitio,
                 'Link': url_hotel
             })
-        except:
+        except requests.RequestException as e:
+            print(f"Timeout o error de conexion en {url_hotel}")
+            continue
+        except Exception as e:
+            print(f"Error procesando ficha {url_hotel}: {e}")
             continue
             
     return datos_finales
 
 def buscar_enlaces_turismocordoba(ciudad):
-    """
-    Busca enlaces de alojamientos en turismocordoba.com.ar
-    """
     base_url = "https://www.turismocordoba.com.ar"
-    
     ciudad_url = ciudad.replace(' ', '+').title()
     url_buscador = f"{base_url}/buscador/?localidad={ciudad_url}"
     
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     
     try:
         resp = requests.get(url_buscador, headers=headers, timeout=15)
         if resp.status_code != 200:
             return None
-        
         soup = BeautifulSoup(resp.text, 'html.parser')
-    except:
+    except Exception as e:
+        print(f"Error en buscador TurismoCordoba: {e}")
         return []
     
     links_fichas = []
-    
     for link in soup.find_all('a', href=True):
         href = link['href']
         texto_link = link.get_text(strip=True).lower()
         
-        if 'más info' in texto_link or 'm�s info' in texto_link:
-            # Limpiar la URL
+        if 'más info' in texto_link or 'ms info' in texto_link:
             if href.startswith('http://') or href.startswith('https://'):
                 url_limpia = href.split('?')[0]
             elif href.startswith('/'):
@@ -160,18 +155,22 @@ def buscar_enlaces_turismocordoba(ciudad):
     return links_fichas
 
 def procesar_fichas_turismocordoba(lista_urls, ciudad, barra, estado):
-    """
-    Procesa fichas individuales de turismocordoba.com.ar
-    """
     datos_finales = []
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-    
     total = len(lista_urls)
     descartados = 0
     
+    # Movemos el diccionario de variaciones afuera del loop para optimizar memoria
+    variaciones = {
+        'villa carlos paz': ['carlos paz', 'vcp', 'villa carlos'],
+        'cordoba': ['córdoba', 'cba', 'cordoba capital'],
+        'villa general belgrano': ['v.g.belgrano', 'belgrano', 'vgb'],
+        'la cumbre': ['lacumbre'],
+        'la cumbrecita': ['lacumbrecita']
+    }
+    
     for i, url in enumerate(lista_urls):
-        progreso = (i + 1) / total
-        barra.progress(progreso)
+        barra.progress((i + 1) / total)
         estado.text(f"Procesando {i+1}/{total} (Descartados: {descartados})...")
         
         try:
@@ -181,26 +180,17 @@ def procesar_fichas_turismocordoba(lista_urls, ciudad, barra, estado):
             texto_completo = soup.get_text()
             
             ciudad_normalizada = ciudad.lower()
-            ciudad_valida = False
+            is_valid_city = False
             
             if ciudad_normalizada in texto_completo.lower():
-                ciudad_valida = True
-            else:
-                variaciones = {
-                    'villa carlos paz': ['carlos paz', 'vcp', 'villa carlos'],
-                    'cordoba': ['córdoba', 'cba', 'cordoba capital'],
-                    'villa general belgrano': ['v.g.belgrano', 'belgrano', 'vgb'],
-                    'la cumbre': ['lacumbre'],
-                    'la cumbrecita': ['lacumbrecita']
-                }
-                
-                if ciudad_normalizada in variaciones:
-                    for variacion in variaciones[ciudad_normalizada]:
-                        if variacion in texto_completo.lower():
-                            ciudad_valida = True
-                            break
+                is_valid_city = True
+            elif ciudad_normalizada in variaciones:
+                for var in variaciones[ciudad_normalizada]:
+                    if var in texto_completo.lower():
+                        is_valid_city = True
+                        break
             
-            if not ciudad_valida:
+            if not is_valid_city:
                 descartados += 1
                 continue
             
@@ -230,14 +220,14 @@ def procesar_fichas_turismocordoba(lista_urls, ciudad, barra, estado):
                 if 7 <= len(mov_limpio) <= 15:
                     telefonos_encontrados.add(mov_limpio)
             
-            whatsapp_detectado = "No"
+            has_wsp = "No"
             wsp_number = ""
             for link in soup.find_all('a', href=True):
                 href = link['href'].lower()
                 texto = link.get_text(strip=True).lower()
                 
                 if 'whatsapp' in href or 'whatsapp' in texto:
-                    whatsapp_detectado = "Sí"
+                    has_wsp = "Sí"
                     num_match = re.search(r'(\d{10,15})', href)
                     if num_match:
                         wsp_number = num_match.group(1)
@@ -246,127 +236,92 @@ def procesar_fichas_turismocordoba(lista_urls, ciudad, barra, estado):
             emails = re.findall(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', texto_completo)
             email_encontrado = ", ".join(set(emails[:2])) if emails else "No encontrado"
             
-            if telefonos_encontrados:
-                resultado_telefonos = " / ".join(sorted(list(telefonos_encontrados)))
-            else:
-                resultado_telefonos = "No encontrado"
+            phones_str = " / ".join(sorted(list(telefonos_encontrados))) if telefonos_encontrados else "No encontrado"
             
-            if wsp_number and wsp_number not in resultado_telefonos:
-                if resultado_telefonos == "No encontrado":
-                    resultado_telefonos = f"WhatsApp: {wsp_number}"
+            if wsp_number and wsp_number not in phones_str:
+                if phones_str == "No encontrado":
+                    phones_str = f"WhatsApp: {wsp_number}"
                 else:
-                    resultado_telefonos += f" / WhatsApp: {wsp_number}"
+                    phones_str += f" / WhatsApp: {wsp_number}"
             
             datos_finales.append({
                 'Nombre': nombre,
-                'Telefonos': resultado_telefonos,
+                'Telefonos': phones_str,
                 'Email': email_encontrado,
-                'WhatsApp': whatsapp_detectado,
+                'WhatsApp': has_wsp,
                 'Ciudad': ciudad,
                 'Web': 'TurismoCordoba',
                 'Link': url
             })
             
         except Exception as e:
+            print(f"Error procesando {url}: {e}")
             continue
     
     return datos_finales
 
-st.title("🔎 Buscador de Alojamientos")
-st.markdown("Herramienta interna para Scraping de alojamientos.")
+# --- UI de Streamlit ---
+
+st.title("Buscador de Alojamientos")
+st.markdown("Herramienta interna para scraping de directorios turísticos.")
 st.divider()
 
 col1, col2 = st.columns([1, 1])
 
 with col1:
     sitio_elegido = st.radio(
-        "1. Elige el sitio web:", 
+        "1. Seleccionar directorio:", 
         ["InterPatagonia", "WelcomeArgentina", "TurismoCordoba"]
     )
-    ciudad_input = st.text_input("2. Escribe la ciudad (URL):", placeholder="ej: bariloche")
+    ciudad_input = st.text_input("2. Ciudad (formato URL o texto):", placeholder="Ej: villa carlos paz")
 
 with col2:
     if sitio_elegido == "TurismoCordoba":
-        st.info("""
-        💡 **INSTRUCCIONES - TurismoCordoba**
-        
-        Escribe el nombre de la ciudad como quieras:
-        
-        * `Villa Carlos Paz` ✅
-        * `villa carlos paz` ✅
-        * `VILLA CARLOS PAZ` ✅
-        
-        **Acepta mayúsculas, minúsculas y espacios.**
-        """)
+        st.info("**TurismoCordoba:** Acepta formato normal con espacios (Ej: Villa Carlos Paz).")
     else:
-        st.info("""
-        💡 **INSTRUCCIONES - InterPatagonia/WelcomeArgentina**
-        
-        Escribe la ciudad de cualquier forma, se normalizará automáticamente:
-        
-        * `Puerto Iguazú` → `puertoiguazu` ✅
-        * `San Martín de los Andes` → `sanmartindelosandes` ✅
-        * `EL CALAFATE` → `elcalafate` ✅
-        * `Villa La Angostura` → `villalaangostura` ✅
-        
-        **Se convertirá automáticamente: minúsculas, sin espacios, sin acentos, todo junto.**
-        """)
+        st.info("**Inter/Welcome:** Se normalizará sin espacios ni tildes automáticamente.")
 
-if st.button("🔍 1. ANALIZAR CIUDAD", type="secondary", use_container_width=True):
+if st.button("ANALIZAR CIUDAD", type="secondary", use_container_width=True):
     if not ciudad_input:
-        st.warning("⚠️ ¡Falta escribir la ciudad!")
+        st.warning("Falta ingresar la ciudad.")
     else:
         if sitio_elegido == "TurismoCordoba":
             ciudad_clean = ciudad_input.strip()
         else:
             ciudad_clean = ciudad_input.strip().lower()
-            ciudad_clean = ciudad_clean.replace(" ", "") 
-            ciudad_clean = ciudad_clean.replace("-", "")  
-            ciudad_clean = ciudad_clean.replace("_", "") 
-            reemplazos = {
-                'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u',
-                'ñ': 'n', 'ü': 'u'
-            }
+            ciudad_clean = ciudad_clean.replace(" ", "").replace("-", "").replace("_", "") 
+            reemplazos = {'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u', 'ñ': 'n', 'ü': 'u'}
             for acento, sin_acento in reemplazos.items():
                 ciudad_clean = ciudad_clean.replace(acento, sin_acento)
         
-        with st.spinner(f"Analizando {sitio_elegido}..."):
+        with st.spinner(f"Escaneando {sitio_elegido}..."):
             if sitio_elegido == "TurismoCordoba":
                 enlaces = buscar_enlaces_turismocordoba(ciudad_clean)
             else:
                 enlaces = buscar_enlaces(sitio_elegido, ciudad_clean)
             
             if enlaces is None:
-                st.error("No se pudo entrar a la página. Revisa que la ciudad esté bien escrita.")
+                st.error("Error de conexión con la página web.")
                 st.session_state.urls_encontradas = []
             elif not enlaces:
-                st.warning("Se encontró la página pero no hay alojamientos.")
+                st.warning("No se encontraron alojamientos.")
                 st.session_state.urls_encontradas = []
             else:
                 st.session_state.urls_encontradas = enlaces
                 st.session_state.ciudad_actual = ciudad_clean
                 st.session_state.sitio_actual = sitio_elegido
-                st.success(f"¡Éxito! Se encontraron {len(enlaces)} alojamientos.")
+                st.success(f"Se encontraron {len(enlaces)} alojamientos.")
 
 if len(st.session_state.urls_encontradas) > 0:
     st.divider()
-    st.subheader(f"📊 Resultados para: {st.session_state.ciudad_actual}")
-    
-    if st.session_state.sitio_actual == "TurismoCordoba":
-        st.info(f"""
-        📌 **Total disponible:** {len(st.session_state.urls_encontradas)} alojamientos
-        
-        ⚠️ **Nota:** Los alojamientos se validan durante la extracción. 
-        Algunos pueden ser descartados si no corresponden a la ciudad buscada.
-        """)
+    st.subheader(f"Resultados para: {st.session_state.ciudad_actual.title()}")
     
     total_disponible = len(st.session_state.urls_encontradas)
-    limite = st.slider("Selecciona cantidad a extraer:", 1, total_disponible, min(10, total_disponible))
+    limite = st.slider("Cantidad a extraer:", 1, total_disponible, min(10, total_disponible))
     
-    if st.button(f"🚀 2. EXTRAER DATOS ({limite})", type="primary", use_container_width=True):
+    if st.button(f"EXTRAER DATOS ({limite})", type="primary", use_container_width=True):
         
         lista_a_procesar = st.session_state.urls_encontradas[:limite]
-        
         barra_carga = st.progress(0)
         mensaje_estado = st.empty()
         
@@ -388,32 +343,28 @@ if len(st.session_state.urls_encontradas) > 0:
         
         if datos:
             df = pd.DataFrame(datos)
-            st.balloons()
             
             if st.session_state.sitio_actual == "TurismoCordoba":
                 descartados = limite - len(datos)
                 if descartados > 0:
-                    st.warning(f"⚠️ Se descartaron {descartados} alojamientos (no correspondían a la ciudad)")
-                mensaje_estado.success(f"¡Proceso Terminado! Extraídos: {len(datos)}")
-            else:
-                mensaje_estado.success("¡Proceso Terminado!")
+                    st.warning(f"Se descartaron {descartados} registros fuera de zona.")
+            
+            mensaje_estado.success(f"Proceso Terminado. {len(datos)} registros extraídos.")
             
             con_telefono = df[df['Telefonos'] != 'No encontrado'].shape[0]
-            st.metric("Con Teléfono", f"{con_telefono}/{len(df)}", f"{con_telefono/len(df)*100:.1f}%")
+            st.metric("Con Teléfono", f"{con_telefono}/{len(df)}", f"{(con_telefono/len(df)*100) if len(df)>0 else 0:.1f}%")
             
-            st.subheader("Vista Previa:")
             st.dataframe(df.head(10))
             
             csv = df.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
-            
             file_name = f"Datos_{st.session_state.sitio_actual}_{st.session_state.ciudad_actual}.csv"
             
             st.download_button(
-                label=f"📥 DESCARGAR ARCHIVO ({len(datos)} datos)",
+                label="DESCARGAR CSV",
                 data=csv,
                 file_name=file_name,
                 mime="text/csv",
                 type="primary"
             )
         else:
-            st.error("No se pudieron extraer datos. Todos los alojamientos fueron descartados.")
+            st.error("Fallo la extracción de datos.")
